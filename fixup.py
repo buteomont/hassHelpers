@@ -18,6 +18,7 @@ IN_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/strike_count"
 OUT_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/~period~/modified_strike_count"
 IN_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/rain_mm"
 HOURLY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/hourly_rain_mm"
+DAILY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/daily_rain_mm"
 
 LIGHTNING_PERIOD=10*60 		# seconds
 RAIN_HOURLY_PERIOD=60*60	# seconds
@@ -49,6 +50,9 @@ def publishLightning(period,value):
 
 def publishHourlyRain(period,value):
 	topic=HOURLY_RAIN_TOPIC.replace("~period~",str(period))
+	# Get rid of extra digits to the right of decimal
+	txt="{rain:.2f}"
+	value=float(txt.format(rain=value))
 	publish(topic,value)
 
 def publish(topic,value):
@@ -71,8 +75,10 @@ def onConnect(client, userdata, flags, rc):
 def onLightningMessage(client, userdata, message):
 	now = int(time.time())  # right now
 	entry=timeval(now,int(message.payload))
-	if not(entry in strikeHistory):
-		strikeHistory.append(entry) # add it to the list
+	if entry in strikeHistory:
+		return
+		
+	strikeHistory.append(entry) # add it to the list
 	
 	# iterate through the list, and calculate the strikes in 
 	# the last LIGHTNING_PERIOD seconds.  Remove any from the list
@@ -93,10 +99,12 @@ def onLightningMessage(client, userdata, message):
 def onRainMessage(client, userdata, message):
 	now = int(time.time())  # right now
 	entry=timeval(now,float(message.payload))
-	if not(entry in rainHistory):
-		rainHistory.append(entry) # add it to the list
+	if entry in rainHistory:
+		return
 	
-	# iterate through the list, and calculate the strikes in 
+	rainHistory.append(entry) # add it to the list
+
+	# iterate through the list, and calculate the rainfall in 
 	# the last RAIN_HOURLY_PERIOD seconds.  Remove any from the list
 	# that are not in that period. Later we will modify this to give
 	# daily, weekly, and monthly values as well.
