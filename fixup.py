@@ -16,25 +16,44 @@ HASS_HOST = "192.168.1.99"
 
 IN_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/strike_count"
 OUT_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/~period~/modified_strike_count"
-RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/rain_mm"
+IN_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/rain_mm"
+HOURLY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/hourly_rain_mm"
 
-LIGHTNING_PERIOD=10*60 # seconds
+LIGHTNING_PERIOD=10*60 		# seconds
+RAIN_HOURLY_PERIOD=60*60	# seconds
+RAIN_DAILY_PERIOD=RAIN_HOURLY_PERIOD*24
+RAIN_WEEKLY_PERIOD=RAIN_DAILY_PERIOD*7
+RAIN_MONTHLY_PERIOD=RAIN_DAILY_PERIOD*30
+
 
 ######### Globals
 strikeHistory=[]
+rainHistory=[]
 
 ######### Classes
-class strike:
+class timeval:
 	time=0
-	count=0
-	def __init__(self,time,count):
+	value=0
+	def __init__(self,time,value):
 		self.time=time
-		self.count=count
+		self.value=value
+	def __eq__(self, other):
+		return self.time == other.time and self.value == other.value
+	def __ne__(self, other):
+		return not(self.__eq__(self, other))
 
 ######### Local Functions
-def publishLightning(value):
-	topic=OUT_LIGHTNING_TOPIC.replace("~period~",str(LIGHTNING_PERIOD))
-	print("publishing "+str(value)+" to "+topic)
+def publishLightning(period,value):
+	topic=OUT_LIGHTNING_TOPIC.replace("~period~",str(period))
+	publish(topic,value)
+
+def publishHourlyRain(period,value):
+	topic=HOURLY_RAIN_TOPIC.replace("~period~",str(period))
+	publish(topic,value)
+
+def publish(topic,value):
+	print("publishing "+str(value)+" to "+topic+" ("
+	+str(len(strikeHistory))+"/"+str(len(rainHistory))+")")
 	rc=client.publish(topic, payload=value, qos=0, retain=False)
 	if rc.rc != mqtt.MQTT_ERR_SUCCESS:
 		print("Publish failed! rc="+str(rc))
@@ -51,7 +70,9 @@ def onConnect(client, userdata, flags, rc):
 # is defined by the constant LIGHTNING_PERIOD above.
 def onLightningMessage(client, userdata, message):
 	now = int(time.time())  # right now
-	strikeHistory.append(strike(now,int(message.payload))) # add it to the list
+	entry=timeval(now,int(message.payload))
+	if not(entry in strikeHistory):
+		strikeHistory.append(entry) # add it to the list
 	
 	# iterate through the list, and calculate the strikes in 
 	# the last LIGHTNING_PERIOD seconds.  Remove any from the list
@@ -60,14 +81,33 @@ def onLightningMessage(client, userdata, message):
 		if strk.time < now - LIGHTNING_PERIOD:
 			strikeHistory.remove(strk)
 		else:
-			publishLightning(int(message.payload)-strk.count)
+			publishLightning(LIGHTNING_PERIOD, int(message.payload)-strk.value)
 			break
 
 
-
+# This is the main routine for the rain sensor.
+# It is called for each MQTT message received that contains
+# the rain amount. The rain amount is cumulative, so it needs
+# to be broken down by time into short periods.  The period length
+# is defined by the constants RAIN_*_PERIOD above.
 def onRainMessage(client, userdata, message):
-	print(float(message.payload))
+	now = int(time.time())  # right now
+	entry=timeval(now,float(message.payload))
+	if not(entry in rainHistory):
+		rainHistory.append(entry) # add it to the list
 	
+	# iterate through the list, and calculate the strikes in 
+	# the last RAIN_HOURLY_PERIOD seconds.  Remove any from the list
+	# that are not in that period. Later we will modify this to give
+	# daily, weekly, and monthly values as well.
+	for rain in rainHistory:
+		if rain.time < now - RAIN_HOURLY_PERIOD:
+			rainHistory.remove(rain)
+		else:
+			publishHourlyRain(RAIN_HOURLY_PERIOD, float(message.payload)-rain.value)
+			break
+	
+
 def on_log(client, userdata, level, buf):
     print("log: ",buf)
 
@@ -78,11 +118,11 @@ client = mqtt.Client()
 client.username_pw_set(MQTT_USER, password=MQTT_PASS)
 client.on_connect = onConnect
 client.message_callback_add(IN_LIGHTNING_TOPIC, onLightningMessage)
-client.message_callback_add(RAIN_TOPIC, onRainMessage)
+client.message_callback_add(IN_RAIN_TOPIC, onRainMessage)
 
 print("Connecting client to HA's MQTT broker")
 client.connect(HASS_HOST, 1883, 60)
-client.subscribe([(IN_LIGHTNING_TOPIC, 0), (RAIN_TOPIC, 0)])
+client.subscribe([(IN_LIGHTNING_TOPIC, 0), (IN_RAIN_TOPIC, 0)])
 
 
 client.loop_forever(timeout=1.0)
