@@ -50,9 +50,10 @@ def publishLightning(period,value):
 
 def publishHourlyRain(period,value):
 	topic=HOURLY_RAIN_TOPIC.replace("~period~",str(period))
-	# Get rid of extra digits to the right of decimal
-	txt="{rain:.2f}"
-	value=float(txt.format(rain=value))
+	publish(topic,value)
+
+def publishDailyRain(period,value):
+	topic=DAILY_RAIN_TOPIC.replace("~period~",str(period))
 	publish(topic,value)
 
 def publish(topic,value):
@@ -73,7 +74,7 @@ def onConnect(client, userdata, flags, rc):
 # to be broken down by time into short periods.  The period length
 # is defined by the constant LIGHTNING_PERIOD above.
 def onLightningMessage(client, userdata, message):
-	now = int(time.time())  # right now
+	now = round(int(time.time()),-1)  # right now to the nearest 10 secs
 	entry=timeval(now,int(message.payload))
 	if entry in strikeHistory:
 		return
@@ -87,7 +88,7 @@ def onLightningMessage(client, userdata, message):
 		if strk.time < now - LIGHTNING_PERIOD:
 			strikeHistory.remove(strk)
 		else:
-			publishLightning(LIGHTNING_PERIOD, int(message.payload)-strk.value)
+			publishLightning(LIGHTNING_PERIOD, entry.value-strk.value)
 			break
 
 
@@ -97,8 +98,12 @@ def onLightningMessage(client, userdata, message):
 # to be broken down by time into short periods.  The period length
 # is defined by the constants RAIN_*_PERIOD above.
 def onRainMessage(client, userdata, message):
-	now = int(time.time())  # right now
-	entry=timeval(now,float(message.payload))
+	now = round(int(time.time()),-1)  # right now to the nearest 10 secs
+
+	# Get rid of extra digits to the right of decimal
+	value=round(float(message.payload),2)
+
+	entry=timeval(now,value)
 	if entry in rainHistory:
 		return
 	
@@ -108,13 +113,18 @@ def onRainMessage(client, userdata, message):
 	# the last RAIN_HOURLY_PERIOD seconds.  Remove any from the list
 	# that are not in that period. Later we will modify this to give
 	# daily, weekly, and monthly values as well.
+	dailyDone=False
 	for rain in rainHistory:
-		if rain.time < now - RAIN_HOURLY_PERIOD:
+		if rain.time < now - RAIN_DAILY_PERIOD:
 			rainHistory.remove(rain)
-		else:
-			publishHourlyRain(RAIN_HOURLY_PERIOD, float(message.payload)-rain.value)
+		elif rain.time >= now - RAIN_HOURLY_PERIOD:
+			publishHourlyRain(RAIN_HOURLY_PERIOD, round(value-rain.value,2))
 			break
-	
+		elif not(dailyDone):
+			dailyDone=True
+			publishDailyRain(RAIN_DAILY_PERIOD, round(value-rain.value,2))
+	if not(dailyDone): # Publish daily number even if we haven't run long enough
+		publishDailyRain(RAIN_DAILY_PERIOD, round(value-rain.value,2))
 
 def on_log(client, userdata, level, buf):
     print("log: ",buf)
@@ -122,6 +132,7 @@ def on_log(client, userdata, level, buf):
 def onSubscribe(client, userdata, mid, granted_qos):
 	print(str(userdata))
 
+########### Processing begins here
 client = mqtt.Client()
 client.username_pw_set(MQTT_USER, password=MQTT_PASS)
 client.on_connect = onConnect
