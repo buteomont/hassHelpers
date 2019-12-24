@@ -14,11 +14,13 @@ MQTT_USER='mqtt'
 MQTT_PASS='tinymqtt'
 HASS_HOST = "192.168.1.99"
 
-IN_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/strike_count"
+IN_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/+/strike_count"
 OUT_LIGHTNING_TOPIC="rtl_433/tinyserver/devices/Acurite-6045M/A/106/~period~/modified_strike_count"
-IN_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/rain_mm"
+IN_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/+/rain_mm"
 HOURLY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/hourly_rain_mm"
 DAILY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/daily_rain_mm"
+IN_OUTDOOR_TEMPERATURE_TOPIC="rtl_433/tinyserver/devices/Acurite-Tower/A/+/temperature_C"
+OUT_OUTDOOR_TEMPERATURE_TOPIC="rtl_433/tinyserver/devices/Acurite-Tower/A/calc/temperature_F"
 
 LIGHTNING_PERIOD=10*60 		# seconds
 RAIN_HOURLY_PERIOD=60*60	# seconds
@@ -55,6 +57,9 @@ def publishHourlyRain(period,value):
 def publishDailyRain(period,value):
 	topic=DAILY_RAIN_TOPIC.replace("~period~",str(period))
 	publish(topic,value)
+
+def publishOutdoorTemperature(value):
+	publish(OUT_OUTDOOR_TEMPERATURE_TOPIC,value)
 
 def publish(topic,value):
 	print("publishing "+str(value)+" to "+topic+" ("
@@ -126,6 +131,12 @@ def onRainMessage(client, userdata, message):
 	if not(dailyDone): # Publish daily number even if we haven't run long enough
 		publishDailyRain(RAIN_DAILY_PERIOD, round(value-rain.value,2))
 
+# This intercepts the outdoor temperature in Celcius and 
+# converts it to Fahrenheit
+def onOutdoorTemperatureMessage(client, userdata, message):
+	value=float(message.payload)*9/5 +32.0
+	publishOutdoorTemperature(round(value,1))
+
 def on_log(client, userdata, level, buf):
     print("log: ",buf)
 
@@ -138,10 +149,11 @@ client.username_pw_set(MQTT_USER, password=MQTT_PASS)
 client.on_connect = onConnect
 client.message_callback_add(IN_LIGHTNING_TOPIC, onLightningMessage)
 client.message_callback_add(IN_RAIN_TOPIC, onRainMessage)
+client.message_callback_add(IN_OUTDOOR_TEMPERATURE_TOPIC, onOutdoorTemperatureMessage)
 
 print("Connecting client to HA's MQTT broker")
 client.connect(HASS_HOST, 1883, 60)
-client.subscribe([(IN_LIGHTNING_TOPIC, 0), (IN_RAIN_TOPIC, 0)])
+client.subscribe([(IN_LIGHTNING_TOPIC, 0), (IN_RAIN_TOPIC, 0), (IN_OUTDOOR_TEMPERATURE_TOPIC, 0)])
 
 
 client.loop_forever(timeout=1.0)
