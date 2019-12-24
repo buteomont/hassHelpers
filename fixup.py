@@ -6,6 +6,7 @@ mqtt documentation is at https://pypi.org/project/paho-mqtt/#callbacks
 '''
 
 import time
+import threading
 import paho.mqtt.publish as publish
 import paho.mqtt.client as mqtt
 
@@ -21,6 +22,7 @@ HOURLY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/hour
 DAILY_RAIN_TOPIC="rtl_433/tinyserver/devices/Acurite-Rain899/0/80/~period~/daily_rain_mm"
 IN_OUTDOOR_TEMPERATURE_TOPIC="rtl_433/tinyserver/devices/Acurite-Tower/A/+/temperature_C"
 OUT_OUTDOOR_TEMPERATURE_TOPIC="rtl_433/tinyserver/devices/Acurite-Tower/A/calc/temperature_F"
+PIR_SENSOR_TOPIC="rtl_433/tinyserver/devices/PIR_sensor/count"
 
 LIGHTNING_PERIOD=10*60 		# seconds
 RAIN_HOURLY_PERIOD=60*60	# seconds
@@ -28,10 +30,12 @@ RAIN_DAILY_PERIOD=RAIN_HOURLY_PERIOD*24
 RAIN_WEEKLY_PERIOD=RAIN_DAILY_PERIOD*7
 RAIN_MONTHLY_PERIOD=RAIN_DAILY_PERIOD*30
 
+PIR_DELAY=60 # seconds
 
 ######### Globals
 strikeHistory=[]
 rainHistory=[]
+pirThreads=[]
 
 ######### Classes
 class timeval:
@@ -60,6 +64,9 @@ def publishDailyRain(period,value):
 
 def publishOutdoorTemperature(value):
 	publish(OUT_OUTDOOR_TEMPERATURE_TOPIC,value)
+
+def absentThread(): # to publish "no motion" after a period of time
+	publish(PIR_SENSOR_TOPIC,0)
 
 def publish(topic,value):
 	print("publishing "+str(value)+" to "+topic+" ("
@@ -143,6 +150,18 @@ def on_log(client, userdata, level, buf):
 def onSubscribe(client, userdata, mid, granted_qos):
 	print(str(userdata))
 
+def onPIR(client, userdata, message):
+	# Cancel any pending reports
+	global pirThreads
+	for t in pirThreads:
+		t.cancel()
+	
+	# Start a new one
+	if (int(message.payload)==1):
+		pirTh=threading.Timer(PIR_DELAY, absentThread)
+		pirThreads.append(pirTh)
+		pirTh.start()
+
 ########### Processing begins here
 client = mqtt.Client()
 client.username_pw_set(MQTT_USER, password=MQTT_PASS)
@@ -150,10 +169,11 @@ client.on_connect = onConnect
 client.message_callback_add(IN_LIGHTNING_TOPIC, onLightningMessage)
 client.message_callback_add(IN_RAIN_TOPIC, onRainMessage)
 client.message_callback_add(IN_OUTDOOR_TEMPERATURE_TOPIC, onOutdoorTemperatureMessage)
+client.message_callback_add(PIR_SENSOR_TOPIC, onPIR)
 
 print("Connecting client to HA's MQTT broker")
 client.connect(HASS_HOST, 1883, 60)
-client.subscribe([(IN_LIGHTNING_TOPIC, 0), (IN_RAIN_TOPIC, 0), (IN_OUTDOOR_TEMPERATURE_TOPIC, 0)])
+client.subscribe([(IN_LIGHTNING_TOPIC, 0), (IN_RAIN_TOPIC, 0), (IN_OUTDOOR_TEMPERATURE_TOPIC, 0), (PIR_SENSOR_TOPIC, 0)])
 
 
 client.loop_forever(timeout=1.0)
